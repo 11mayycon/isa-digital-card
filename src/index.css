@@ -135,8 +135,7 @@
       box-shadow: 0 0 20px hsl(var(--primary) / 0.8);
     }
   }
-}
-
+  
   .dark {
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;

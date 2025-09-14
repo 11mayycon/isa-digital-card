@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,21 +45,78 @@ const COLORS = ['hsl(217, 91%, 60%)', 'hsl(187, 85%, 53%)', 'hsl(32, 95%, 44%)',
 const PainelDashboard = () => {
   const { matricula } = useParams();
   const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [creditCards, setCreditCards] = useState<any[]>([]);
+  const [reminders, setReminders] = useState<any[]>([]);
 
   useEffect(() => {
-    // Simular carregamento
-    const timer = setTimeout(() => setLoading(false), 1000);
-    return () => clearTimeout(timer);
-  }, []);
+    const loadDashboardData = async () => {
+      if (!matricula) return;
 
-  // Cálculos baseados nos dados mock
-  const receitas = mockTransactions.filter(t => t.tipo === 'receita').reduce((sum, t) => sum + t.valor, 0);
-  const gastos = mockTransactions.filter(t => t.tipo === 'gasto').reduce((sum, t) => sum + t.valor, 0);
+      try {
+        // Buscar dados do usuário
+        const { data: userData } = await supabase
+          .from('users')
+          .select('*')
+          .eq('matricula', matricula)
+          .single();
+
+        if (userData) {
+          setUser(userData);
+
+          // Buscar transações
+          const { data: transactionData } = await supabase
+            .from('transactions')
+            .select('*')
+            .eq('user_id', userData.id)
+            .order('created_at', { ascending: false });
+
+          // Buscar cartões de crédito
+          const { data: cardData } = await supabase
+            .from('credit_cards')
+            .select('*')
+            .eq('user_id', userData.id);
+
+          // Buscar lembretes
+          const { data: reminderData } = await supabase
+            .from('reminders')
+            .select('*')
+            .eq('user_id', userData.id)
+            .eq('status', 'pendente')
+            .order('due_date', { ascending: true })
+            .limit(3);
+
+          setTransactions(transactionData || []);
+          setCreditCards(cardData || []);
+          setReminders(reminderData || []);
+        }
+      } catch (error) {
+        console.error('Erro ao carregar dados:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDashboardData();
+  }, [matricula]);
+
+  // Cálculos baseados nos dados reais
+  const receitas = transactions.filter(t => t.type === 'receita').reduce((sum, t) => sum + parseFloat(t.amount), 0);
+  const gastos = transactions.filter(t => t.type === 'gasto').reduce((sum, t) => sum + parseFloat(t.amount), 0);
   const saldo = receitas - gastos;
 
-  const gastosData = mockTransactions
-    .filter(t => t.tipo === 'gasto')
-    .map(t => ({ name: t.categoria, value: t.valor }));
+  const gastosData = transactions
+    .filter(t => t.type === 'gasto')
+    .reduce((acc: any[], t) => {
+      const existing = acc.find(item => item.name === t.category);
+      if (existing) {
+        existing.value += parseFloat(t.amount);
+      } else {
+        acc.push({ name: t.category || 'Outros', value: parseFloat(t.amount) });
+      }
+      return acc;
+    }, []);
 
   if (loading) {
     return (
@@ -136,9 +194,14 @@ const PainelDashboard = () => {
                 <CreditCard className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">Nubank</div>
+                <div className="text-2xl font-bold">
+                  {creditCards.length > 0 ? creditCards[0].card_name : 'Nenhum cartão'}
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  R$ 850 gastos este mês
+                  {creditCards.length > 0 
+                    ? `R$ ${parseFloat(creditCards[0].used_amount || 0).toLocaleString('pt-BR')} gastos este mês`
+                    : 'Nenhum cartão cadastrado'
+                  }
                 </p>
               </CardContent>
             </Card>
@@ -160,20 +223,27 @@ const PainelDashboard = () => {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                {mockReminders.map((reminder, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-accent/50 rounded-lg">
-                    <div>
-                      <p className="font-medium">{reminder.titulo}</p>
-                      <p className="text-sm text-muted-foreground">{reminder.data}</p>
+                {reminders.length > 0 ? (
+                  reminders.map((reminder, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 bg-accent/50 rounded-lg">
+                      <div>
+                        <p className="font-medium">{reminder.title}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(reminder.due_date).toLocaleDateString('pt-BR')}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <Badge variant="outline" className="text-xs">
+                          {reminder.status}
+                        </Badge>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-bold">R$ {reminder.valor.toLocaleString('pt-BR')}</p>
-                      <Badge variant="outline" className="text-xs">
-                        Pendente
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <p className="text-center text-muted-foreground py-8">
+                    Você não tem lembretes ativos.
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -207,22 +277,31 @@ const PainelDashboard = () => {
               <CardContent>
                 <div className="h-80">
                   <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={gastosData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {gastosData.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => [`R$ ${Number(value).toLocaleString('pt-BR')}`, 'Valor']} />
-                    </PieChart>
+                    {gastosData.length > 0 ? (
+                      <PieChart>
+                        <Pie
+                          data={gastosData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {gastosData.map((_, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value) => [`R$ ${Number(value).toLocaleString('pt-BR')}`, 'Valor']} />
+                      </PieChart>
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-muted-foreground text-center">
+                          Sem dados de gastos ainda.<br />
+                          <span className="text-sm">Adicione transações para ver a distribuição.</span>
+                        </p>
+                      </div>
+                    )}
                   </ResponsiveContainer>
                 </div>
               </CardContent>

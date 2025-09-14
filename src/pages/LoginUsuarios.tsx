@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, CreditCard, AlertTriangle } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 const LoginUsuarios = () => {
   const [matricula, setMatricula] = useState('');
@@ -26,18 +27,33 @@ const LoginUsuarios = () => {
     setBlocked(false);
 
     try {
-      // Simular validação - conectar com Supabase depois
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Mock: Simular diferentes cenários
-      if (matricula === '12345') {
+      // 1. Verificar se a matrícula existe na tabela users
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('matricula', matricula)
+        .single();
+
+      if (userError || !user) {
         setError('Matrícula inválida. Verifique seus dados.');
-      } else if (matricula === '99999') {
-        setBlocked(true);
-      } else {
-        // Sucesso - redirecionar para o painel
-        navigate(`/painel/${matricula}`);
+        return;
       }
+
+      // 2. Verificar se há assinatura ativa
+      const { data: subscription, error: subError } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
+        .single();
+
+      if (subError || !subscription) {
+        setBlocked(true);
+        return;
+      }
+
+      // 3. Login bem-sucedido - redirecionar
+      navigate(`/painel/${matricula}`);
     } catch (err) {
       setError('Erro ao validar matrícula. Tente novamente.');
     } finally {
@@ -63,7 +79,7 @@ const LoginUsuarios = () => {
           <CardContent className="space-y-4">
             <Button 
               className="w-full btn-glow bg-gradient-primary hover:bg-gradient-primary/90"
-              onClick={() => window.open('https://stripe.com', '_blank')}
+              onClick={() => window.open('https://buy.stripe.com/test_subscription_link', '_blank')}
             >
               <CreditCard className="w-4 h-4 mr-2" />
               🔗 Assine Agora
